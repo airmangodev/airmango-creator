@@ -1,0 +1,9 @@
+﻿Analyzing Airmango Creator...                                   
+
+  error - The named parameter 'delegate' is required, but there's no corresponding argument - lib\features\organize\organize_screen.dart:80:25 - missing_required_argument
+  error - The named parameter 'itemCount' isn't defined - lib\features\organize\organize_screen.dart:87:19 - undefined_named_parameter
+  error - The named parameter 'itemBuilder' isn't defined - lib\features\organize\organize_screen.dart:88:19 - undefined_named_parameter
+  error - Methods can't be invoked in constant expressions - lib\features\organize\organize_screen.dart:262:21 - const_eval_method_invocation
+   info - Unnecessary use of multiple underscores - lib\features\organize\organize_screen.dart:295:31 - unnecessary_underscores
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\features\organize\organize_screen.dart:357:11 - deprecated_member_use
+

@@ -1,0 +1,6 @@
+﻿Analyzing Airmango Creator...                                   
+
+   info - The import of 'dart:ui' is unnecessary because all of the used elements are also provided by the import of 'package:flutter/material.dart' - lib\features\capture\capture_overlay.dart:6:8 - unnecessary_import
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\features\capture\capture_overlay.dart:96:41 - deprecated_member_use
+   info - Don't use 'BuildContext's across async gaps - lib\features\capture\capture_overlay.dart:235:36 - use_build_context_synchronously
+
