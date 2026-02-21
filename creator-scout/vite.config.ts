@@ -27,7 +27,7 @@ export default defineConfig({
             console.log('proxy error', err);
           });
           proxy.on('proxyReq', (proxyReq, req, _res) => {
-            const urlObj = new URL(req.url, 'http://localhost');
+            const urlObj = new URL(req.url || '/', 'http://localhost');
             const targetUrlStr = urlObj.searchParams.get('url');
 
             if (targetUrlStr) {
@@ -42,7 +42,7 @@ export default defineConfig({
             proxyReq.setHeader('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
             proxyReq.removeHeader('origin');
           });
-          proxy.on('proxyRes', (proxyRes, req, _res) => {
+          proxy.on('proxyRes', (proxyRes, _req, _res) => {
             proxyRes.headers['access-control-allow-origin'] = '*';
             proxyRes.headers['access-control-allow-methods'] = 'GET, OPTIONS';
             proxyRes.headers['access-control-allow-headers'] = 'Origin, X-Requested-With, Content-Type, Accept';
