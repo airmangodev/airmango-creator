@@ -4,7 +4,12 @@ const API_TOKEN = import.meta.env.VITE_NOCODB_API_TOKEN;
 const PROJECT_ID = 'pfj2wm7mqdy2aje';
 const LEADS_TABLE = 'ma36vc2ofr4ozbc';
 const POSTS_TABLE = 'mntx3ptd0skk15g';
-const BASE_URL = '/api/v1/db/data/v1';
+
+// In dev, the Vite proxy handles /api -> nocodb. In production, call NocoDB directly.
+const NOCODB_HOST = import.meta.env.DEV
+    ? '/api/v1/db/data/v1'
+    : 'https://nocodb.restaurantreykjavik.com/api/v1/db/data/v1';
+const BASE_URL = NOCODB_HOST;
 
 const headers = {
     'xc-token': API_TOKEN,
