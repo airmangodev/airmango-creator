@@ -1,0 +1,16 @@
+﻿src/lib/api.ts(1,10): error TS1484: 'Lead' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/api.ts(1,16): error TS1484: 'Post' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/lib/api.ts(1,22): error TS1484: 'LeadStatus' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/views/AllLeads.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/views/AllLeads.tsx(3,10): error TS1484: 'Lead' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/views/ApprovedLeads.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/views/ApprovedLeads.tsx(3,10): error TS1484: 'Lead' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/views/RejectedLeads.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/views/RejectedLeads.tsx(3,10): error TS1484: 'Lead' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/views/RejectedLeads.tsx(5,10): error TS6133: 'ExternalLink' is declared but its value is never read.
+src/views/ReviewQueue.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/views/ReviewQueue.tsx(3,10): error TS1484: 'Lead' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/views/ReviewQueue.tsx(6,16): error TS6133: 'CardContent' is declared but its value is never read.
+src/views/ReviewQueue.tsx(153,37): error TS6133: 'e' is declared but its value is never read.
+src/views/ReviewQueue.tsx(153,50): error TS6133: 'velocity' is declared but its value is never read.
+src/views/StatsDashboard.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
