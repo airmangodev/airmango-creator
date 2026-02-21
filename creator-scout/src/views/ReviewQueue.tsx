@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { fetchLeads, updateLead, fetchUserPosts } from '../lib/api';
 import type { Lead } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, X, ChevronLeft, ChevronRight, ExternalLink } from 'lucide-react';
+import { Check, X, ChevronLeft, ChevronRight, ExternalLink, Loader2 } from 'lucide-react';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
@@ -18,6 +18,7 @@ export default function ReviewQueue() {
     const [activeImages, setActiveImages] = useState<string[]>([]);
     const [imageIndex, setImageIndex] = useState(0);
     const [fetchingImages, setFetchingImages] = useState(false);
+    const [imgStatus, setImgStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
     useEffect(() => {
         loadLeads();
@@ -57,6 +58,10 @@ export default function ReviewQueue() {
         // If we reach here, post_images is empty or invalid. We must fetch.
         fetchAndSaveImages(currentLead);
     }, [currentLead]);
+
+    useEffect(() => {
+        setImgStatus('loading');
+    }, [imageIndex, activeImages]);
 
     async function fetchAndSaveImages(lead: Lead) {
         setFetchingImages(true);
@@ -162,11 +167,22 @@ export default function ReviewQueue() {
                             <div className="relative flex-1 bg-black overflow-hidden group">
                                 {activeImages.length > 0 ? (
                                     <>
-                                        {/* Fallback Graphic (rendered behind the image) */}
-                                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500 z-0">
-                                            <span className="text-4xl mb-2 opacity-50">📸</span>
-                                            <p className="font-medium text-sm">Image Protected by Instagram</p>
-                                        </div>
+                                        {/* Loading State */}
+                                        {imgStatus === 'loading' && (
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500 z-0">
+                                                <Loader2 className="w-8 h-8 animate-spin mb-4 text-white/50" />
+                                                <p className="font-medium text-sm text-white/50">Loading image...</p>
+                                            </div>
+                                        )}
+
+                                        {/* Error State */}
+                                        {imgStatus === 'error' && (
+                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500 z-0">
+                                                <span className="text-4xl mb-2 opacity-50">📸</span>
+                                                <p className="font-medium text-sm">Image Protected by Instagram</p>
+                                            </div>
+                                        )}
+
                                         {/* Actual Image */}
                                         <img
                                             key={activeImages[imageIndex]} // Force remount on slide change to reset error states reliably
@@ -177,10 +193,13 @@ export default function ReviewQueue() {
                                             onError={(e) => {
                                                 console.warn("Instagram blocked image load:", activeImages[imageIndex]);
                                                 (e.target as HTMLImageElement).style.opacity = '0';
+                                                setImgStatus('error');
                                             }}
                                             onLoad={(e) => {
                                                 (e.target as HTMLImageElement).style.opacity = '1';
+                                                setImgStatus('loaded');
                                             }}
+                                            style={{ opacity: imgStatus === 'loaded' ? 1 : 0 }}
                                         />
                                     </>
                                 ) : (
@@ -284,6 +303,6 @@ export default function ReviewQueue() {
                     <Check size={32} strokeWidth={3} />
                 </button>
             </div>
-        </div>
+        </div >
     );
 }
