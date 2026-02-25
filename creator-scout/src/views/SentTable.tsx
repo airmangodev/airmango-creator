@@ -6,7 +6,7 @@ import { ExternalLink } from 'lucide-react';
 import { makeImageUrl } from '../lib/image-proxy';
 import { formatNumber, formatDate } from '../lib/utils';
 
-export default function RejectedLeads() {
+export default function SentTable() {
     const [leads, setLeads] = useState<OutreachLead[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -16,19 +16,19 @@ export default function RejectedLeads() {
 
     async function loadLeads() {
         try {
-            const data = await fetchOutreachLeads('rejected', 200);
+            const data = await fetchOutreachLeads('sent', 200);
             setLeads(data);
         } catch (e) { console.error(e); }
         finally { setLoading(false); }
     }
 
-    if (loading) return <div className="p-8 text-muted-foreground">Loading rejected leads...</div>;
+    if (loading) return <div className="p-8 text-muted-foreground">Loading sent emails...</div>;
 
     return (
         <div className="p-8">
             <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold">Rejected Leads</h2>
-                <Badge variant="outline">{leads.length} rejected</Badge>
+                <h2 className="text-2xl font-bold">Sent Emails</h2>
+                <Badge variant="outline">{leads.length} emails sent</Badge>
             </div>
             <div className="border rounded-lg overflow-hidden bg-card text-card-foreground">
                 <table className="w-full text-sm text-left">
@@ -40,7 +40,7 @@ export default function RejectedLeads() {
                             <th className="px-6 py-3">Eng Rate</th>
                             <th className="px-6 py-3">Photo Score</th>
                             <th className="px-6 py-3">Location</th>
-                            <th className="px-6 py-3">Rejected</th>
+                            <th className="px-6 py-3">Sent</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -76,11 +76,11 @@ export default function RejectedLeads() {
                                 <td className="px-6 py-4">{lead.engagement_rate || 0}%</td>
                                 <td className="px-6 py-4">{lead.photo_score != null ? `${lead.photo_score}/10` : '—'}</td>
                                 <td className="px-6 py-4 text-muted-foreground">{lead.location_name || '—'}</td>
-                                <td className="px-6 py-4 text-muted-foreground">{formatDate(lead.rejected_at)}</td>
+                                <td className="px-6 py-4 text-muted-foreground">{formatDate(lead.sent_at)}</td>
                             </tr>
                         ))}
                         {leads.length === 0 && (
-                            <tr><td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">No rejected leads.</td></tr>
+                            <tr><td colSpan={7} className="px-6 py-12 text-center text-muted-foreground">No emails sent yet.</td></tr>
                         )}
                     </tbody>
                 </table>

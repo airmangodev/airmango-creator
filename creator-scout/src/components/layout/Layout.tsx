@@ -1,5 +1,6 @@
 import { Sidebar } from './Sidebar';
 import { Outlet } from 'react-router-dom';
+import { ToastContainer } from '../ui/Toast';
 
 export function Layout() {
     return (
@@ -8,14 +9,15 @@ export function Layout() {
                 <Sidebar />
             </div>
             <main className="flex-1 overflow-y-auto relative">
-                {/* Mobile Nav Header could go here */}
+                {/* Mobile Nav Header */}
                 <div className="md:hidden flex items-center p-4 border-b bg-card">
-                    <h1 className="text-lg font-bold">Creator Scout</h1>
+                    <h1 className="text-lg font-bold">Email Outreach</h1>
                 </div>
                 <div className="h-full">
                     <Outlet />
                 </div>
             </main>
+            <ToastContainer />
         </div>
     );
 }
