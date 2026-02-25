@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { fetchOutreachLeads, approveAndSendEmail, rejectOutreachLead, undoRejectLead, getOutreachCounts, fetchUserPosts } from '../lib/api';
+import { useEffect, useState, useCallback } from 'react';
+import { fetchOutreachLeads, approveAndSendEmail, rejectOutreachLead, getOutreachCounts, fetchUserPosts } from '../lib/api';
 import type { OutreachLead } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Mail, MapPin, Send, SkipForward, X, Undo2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Mail, MapPin, Send, SkipForward, X } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { makeImageUrl } from '../lib/image-proxy';
@@ -31,21 +31,14 @@ export default function ReviewQueue() {
     const [pendingCount, setPendingCount] = useState(0);
     const [sentTodayCount, setSentTodayCount] = useState(0);
 
-    // Undo state
-    const [lastRejected, setLastRejected] = useState<{ lead: OutreachLead; index: number } | null>(null);
-    const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
 
     useEffect(() => {
         loadLeads();
         loadCounts();
     }, []);
 
-    // Clear undo timer on unmount
-    useEffect(() => {
-        return () => {
-            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-        };
-    }, []);
+
 
     async function loadLeads() {
         setLoading(true);
@@ -195,7 +188,6 @@ export default function ReviewQueue() {
     const handleApprove = useCallback(async () => {
         if (!currentLead || actionInProgress) return;
         setActionInProgress(true);
-        setLastRejected(null); // clear undo
 
         try {
             await approveAndSendEmail(currentLead, editedSubject, editedBody);
@@ -223,12 +215,6 @@ export default function ReviewQueue() {
             await rejectOutreachLead(currentLead.Id);
             showToast(`Rejected @${currentLead.username}`, 'info');
             setPendingCount(prev => Math.max(0, prev - 1));
-
-            // Store for undo
-            setLastRejected({ lead: currentLead, index: currentIndex });
-            // Auto-clear undo after 8 seconds
-            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-            undoTimerRef.current = setTimeout(() => setLastRejected(null), 8000);
         } catch (e) {
             console.error(e);
             showToast('Failed to reject lead', 'error');
@@ -242,28 +228,7 @@ export default function ReviewQueue() {
         }, 300);
     }, [currentLead, actionInProgress, currentIndex]);
 
-    const handleUndo = useCallback(async () => {
-        if (!lastRejected) return;
-        try {
-            await undoRejectLead(lastRejected.lead.Id);
-            showToast(`Undo — @${lastRejected.lead.username} restored to queue`, 'success');
-            setPendingCount(prev => prev + 1);
 
-            // Re-insert the lead at its original position
-            setLeads(prev => {
-                const updated = [...prev];
-                updated.splice(lastRejected.index, 0, lastRejected.lead);
-                return updated;
-            });
-            // Go back to that position
-            setCurrentIndex(lastRejected.index);
-            setLastRejected(null);
-            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
-        } catch (e) {
-            console.error(e);
-            showToast('Failed to undo rejection', 'error');
-        }
-    }, [lastRejected]);
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -281,14 +246,11 @@ export default function ReviewQueue() {
             } else if (e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 goNext();
-            } else if (e.ctrlKey && e.key.toLowerCase() === 'z') {
-                e.preventDefault();
-                handleUndo();
             }
         }
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [currentLead, handleApprove, handleReject, goNext, handleUndo]);
+    }, [currentLead, handleApprove, handleReject, goNext]);
 
     if (loading) {
         return (
@@ -511,34 +473,7 @@ export default function ReviewQueue() {
                     </motion.div>
                 </AnimatePresence>
 
-                {/* UNDO BANNER — fixed at bottom */}
-                <AnimatePresence>
-                    {lastRejected && (
-                        <motion.div
-                            initial={{ y: 80, opacity: 0 }}
-                            animate={{ y: 0, opacity: 1 }}
-                            exit={{ y: 80, opacity: 0 }}
-                            transition={{ duration: 0.25 }}
-                            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-50"
-                        >
-                            <div className="flex items-center gap-3 bg-zinc-900 text-white pl-4 pr-2 py-2.5 rounded-full shadow-xl">
-                                <span className="text-sm">
-                                    Rejected <strong>@{lastRejected.lead.username}</strong>
-                                </span>
-                                <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={handleUndo}
-                                    className="gap-1.5 text-amber-400 hover:text-amber-300 hover:bg-white/10 rounded-full"
-                                >
-                                    <Undo2 size={14} />
-                                    Undo
-                                    <kbd className="ml-0.5 text-[10px] bg-white/15 px-1 py-0.5 rounded font-mono">Ctrl+Z</kbd>
-                                </Button>
-                            </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
+
             </div>
         </div>
     );
