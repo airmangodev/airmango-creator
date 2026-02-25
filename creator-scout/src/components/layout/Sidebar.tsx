@@ -8,9 +8,14 @@ export function Sidebar() {
     const [pendingCount, setPendingCount] = useState<number | null>(null);
 
     useEffect(() => {
-        getOutreachCounts()
-            .then(c => setPendingCount(c.pending))
-            .catch(() => { });
+        const refresh = () => {
+            getOutreachCounts()
+                .then(c => setPendingCount(c.pending))
+                .catch(() => { });
+        };
+        refresh();
+        const interval = setInterval(refresh, 10000);
+        return () => clearInterval(interval);
     }, []);
 
     const navItems = [

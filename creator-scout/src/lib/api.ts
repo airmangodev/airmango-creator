@@ -5,7 +5,11 @@ const PROJECT_ID = 'pfj2wm7mqdy2aje';
 const LEADS_TABLE = 'ma36vc2ofr4ozbc';
 const POSTS_TABLE = 'mntx3ptd0skk15g';
 const OUTREACH_TABLE = import.meta.env.VITE_OUTREACH_TABLE_ID || 'm4rmcypybbwgk2b';
-const SEND_WEBHOOK = import.meta.env.VITE_SEND_EMAIL_WEBHOOK || 'https://n8n.restaurantreykjavik.com/webhook/content-leads-mail-outreach';
+
+// Webhook URL: proxy in dev to avoid CORS, direct in production
+const SEND_WEBHOOK = import.meta.env.DEV
+    ? '/webhook-proxy/webhook/content-leads-mail-outreach'
+    : (import.meta.env.VITE_SEND_EMAIL_WEBHOOK || 'https://n8n.restaurantreykjavik.com/webhook/content-leads-mail-outreach');
 
 // In dev, the Vite proxy handles /api -> nocodb. In production, call NocoDB directly.
 const NOCODB_HOST = import.meta.env.DEV
@@ -49,7 +53,7 @@ export async function updateLead(id: number, data: Partial<Lead>): Promise<Lead>
     return await res.json();
 }
 
-export async function fetchUserPosts(username: string, limit = 5): Promise<Post[]> {
+export async function fetchUserPosts(username: string, limit = 10): Promise<Post[]> {
     const url = `${BASE_URL}/${PROJECT_ID}/${POSTS_TABLE}?where=(username,eq,${username})&limit=${limit}&sort=-likes`;
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`Failed to fetch posts: ${res.statusText}`);
@@ -88,15 +92,20 @@ export async function fetchOutreachLeads(status?: OutreachStatus, limit = 200): 
 /** Update an outreach lead by ID */
 export async function updateOutreachLead(
     id: number,
-    fields: Partial<OutreachLead>
+    fields: Record<string, any>
 ): Promise<void> {
     const url = `${BASE_URL}/${PROJECT_ID}/${OUTREACH_TABLE}/${id}`;
+    console.log('[API] PATCH', url, fields);
     const res = await fetch(url, {
         method: 'PATCH',
         headers,
         body: JSON.stringify(fields),
     });
-    if (!res.ok) throw new Error(`Failed to update outreach lead: ${res.statusText}`);
+    if (!res.ok) {
+        const errText = await res.text();
+        console.error('[API] PATCH failed:', res.status, errText);
+        throw new Error(`Failed to update outreach lead: ${res.status} ${res.statusText}`);
+    }
 }
 
 /** Approve & send: POST to n8n webhook then update NocoDB status to 'sent' */
@@ -106,7 +115,8 @@ export async function approveAndSendEmail(
     editedBody: string
 ): Promise<void> {
     // 1. Call the n8n webhook to trigger email sending
-    await fetch(SEND_WEBHOOK, {
+    console.log('[API] POST webhook', SEND_WEBHOOK);
+    const webhookRes = await fetch(SEND_WEBHOOK, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -119,13 +129,19 @@ export async function approveAndSendEmail(
         }),
     });
 
-    // 2. Update NocoDB record to 'sent'
+    if (!webhookRes.ok) {
+        console.error('[API] Webhook failed:', webhookRes.status);
+        throw new Error(`Webhook failed (${webhookRes.status}) — email was NOT sent. Check n8n workflow.`);
+    }
+    console.log('[API] Webhook success:', webhookRes.status);
+
+    // 2. Only update NocoDB record to 'sent' if webhook succeeded
     await updateOutreachLead(lead.Id, {
         status: 'sent',
         email_subject: editedSubject,
         email_body: editedBody,
         sent_at: new Date().toISOString(),
-    } as any);
+    });
 }
 
 /** Reject an outreach lead */
@@ -133,7 +149,15 @@ export async function rejectOutreachLead(recordId: number): Promise<void> {
     await updateOutreachLead(recordId, {
         status: 'rejected',
         rejected_at: new Date().toISOString(),
-    } as any);
+    });
+}
+
+/** Undo a rejection — set back to pending_approval */
+export async function undoRejectLead(recordId: number): Promise<void> {
+    await updateOutreachLead(recordId, {
+        status: 'pending_approval',
+        rejected_at: null,
+    });
 }
 
 /** Get pipeline counts for sidebar badge & dashboard */
@@ -155,7 +179,7 @@ export async function getOutreachCounts(): Promise<{
 /** Get aggregated stats for the dashboard */
 export async function getOutreachStats() {
     const all = await fetchOutreachLeads(undefined, 5000);
-    const withEmail = all.length; // all records in outreach_queue have email
+    const withEmail = all.length;
     const sentCount = all.filter(l => l.status === 'sent').length;
     const pendingCount = all.filter(l => l.status === 'pending_approval').length;
     const rejectedCount = all.filter(l => l.status === 'rejected').length;

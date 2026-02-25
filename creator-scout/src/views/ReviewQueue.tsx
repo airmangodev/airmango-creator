@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
-import { fetchOutreachLeads, approveAndSendEmail, rejectOutreachLead, getOutreachCounts } from '../lib/api';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { fetchOutreachLeads, approveAndSendEmail, rejectOutreachLead, undoRejectLead, getOutreachCounts, fetchUserPosts } from '../lib/api';
 import type { OutreachLead } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Mail, MapPin, Send, SkipForward, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ExternalLink, Loader2, Mail, MapPin, Send, SkipForward, X, Undo2 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { makeImageUrl } from '../lib/image-proxy';
@@ -31,9 +31,20 @@ export default function ReviewQueue() {
     const [pendingCount, setPendingCount] = useState(0);
     const [sentTodayCount, setSentTodayCount] = useState(0);
 
+    // Undo state
+    const [lastRejected, setLastRejected] = useState<{ lead: OutreachLead; index: number } | null>(null);
+    const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     useEffect(() => {
         loadLeads();
         loadCounts();
+    }, []);
+
+    // Clear undo timer on unmount
+    useEffect(() => {
+        return () => {
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        };
     }, []);
 
     async function loadLeads() {
@@ -52,7 +63,6 @@ export default function ReviewQueue() {
         try {
             const counts = await getOutreachCounts();
             setPendingCount(counts.pending);
-            // Count sent today
             const allSent = await fetchOutreachLeads('sent', 500);
             const today = new Date().toISOString().split('T')[0];
             const sentToday = allSent.filter(l => l.sent_at && l.sent_at.startsWith(today)).length;
@@ -69,11 +79,12 @@ export default function ReviewQueue() {
         if (!currentLead) return;
 
         setImageIndex(0);
+        setFailedIndices(new Set());
         setBioExpanded(false);
         setEditedSubject(currentLead.email_subject || '');
         setEditedBody(currentLead.email_body || '');
 
-        // Parse post_images
+        // Build initial image list from outreach record
         const images: string[] = [];
         if (currentLead.best_post_image) images.push(currentLead.best_post_image);
         if (currentLead.post_images) {
@@ -89,17 +100,90 @@ export default function ReviewQueue() {
             }
         }
         setActiveImages(images.length > 0 ? images : []);
+
+        // If we have fewer than 6 images, try to fetch more from the scout_posts table
+        if (images.length < 6) {
+            fetchMoreImages(currentLead.username, images);
+        }
     }, [currentLead]);
 
+    async function fetchMoreImages(username: string, existingImages: string[]) {
+        try {
+            const posts = await fetchUserPosts(username, 12);
+            const urls = posts
+                .map(p => p.image_url)
+                .filter((url): url is string => !!url && !existingImages.includes(url));
+
+            if (urls.length > 0) {
+                const combined = [...existingImages, ...urls].slice(0, 12);
+                setActiveImages(combined);
+            }
+        } catch (e) {
+            console.log('No additional images found in scout_posts for', username);
+        }
+    }
+
+    // Track failed images so we skip them
+    const [failedIndices, setFailedIndices] = useState<Set<number>>(new Set());
+
+    // Image loading: set status + timeout that auto-skips
     useEffect(() => {
         setImgStatus('loading');
+        const timeout = setTimeout(() => {
+            setImgStatus(prev => {
+                if (prev === 'loading') {
+                    // Auto-skip to next working image
+                    autoSkipToNext(imageIndex);
+                    return 'error';
+                }
+                return prev;
+            });
+        }, 15000); // 15s timeout for Instagram CDN
+        return () => clearTimeout(timeout);
     }, [imageIndex, activeImages]);
 
+    // Find the next image index that hasn't failed
+    function autoSkipToNext(failedIdx: number) {
+        setFailedIndices(prev => {
+            const next = new Set(prev);
+            next.add(failedIdx);
+            // Find next non-failed image
+            for (let i = failedIdx + 1; i < activeImages.length; i++) {
+                if (!next.has(i)) {
+                    setTimeout(() => setImageIndex(i), 100);
+                    return next;
+                }
+            }
+            // Try backwards if nothing ahead
+            for (let i = failedIdx - 1; i >= 0; i--) {
+                if (!next.has(i)) {
+                    setTimeout(() => setImageIndex(i), 100);
+                    return next;
+                }
+            }
+            return next; // All failed
+        });
+    }
+
+    const handleImageError = useCallback(() => {
+        autoSkipToNext(imageIndex);
+        setImgStatus('error');
+    }, [imageIndex, activeImages.length]);
+
+    // Get working images count
+    const workingImagesCount = activeImages.length - failedIndices.size;
+    const allImagesFailed = workingImagesCount <= 0 && activeImages.length > 0;
+
     const nextImage = () => {
-        if (imageIndex < activeImages.length - 1) setImageIndex(i => i + 1);
+        // Skip to next non-failed image
+        for (let i = imageIndex + 1; i < activeImages.length; i++) {
+            if (!failedIndices.has(i)) { setImageIndex(i); return; }
+        }
     };
     const prevImage = () => {
-        if (imageIndex > 0) setImageIndex(i => i - 1);
+        for (let i = imageIndex - 1; i >= 0; i--) {
+            if (!failedIndices.has(i)) { setImageIndex(i); return; }
+        }
     };
 
     const goNext = useCallback(() => {
@@ -111,15 +195,18 @@ export default function ReviewQueue() {
     const handleApprove = useCallback(async () => {
         if (!currentLead || actionInProgress) return;
         setActionInProgress(true);
+        setLastRejected(null); // clear undo
 
         try {
             await approveAndSendEmail(currentLead, editedSubject, editedBody);
             showToast(`Email approved — sending to ${currentLead.email}`, 'success');
             setPendingCount(prev => Math.max(0, prev - 1));
             setSentTodayCount(prev => prev + 1);
-        } catch (e) {
+        } catch (e: any) {
             console.error(e);
-            showToast('Failed to send email', 'error');
+            showToast(e.message || 'Failed to send email', 'error');
+            setActionInProgress(false);
+            return; // Don't advance if failed
         }
 
         setTimeout(() => {
@@ -136,16 +223,47 @@ export default function ReviewQueue() {
             await rejectOutreachLead(currentLead.Id);
             showToast(`Rejected @${currentLead.username}`, 'info');
             setPendingCount(prev => Math.max(0, prev - 1));
+
+            // Store for undo
+            setLastRejected({ lead: currentLead, index: currentIndex });
+            // Auto-clear undo after 8 seconds
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+            undoTimerRef.current = setTimeout(() => setLastRejected(null), 8000);
         } catch (e) {
             console.error(e);
             showToast('Failed to reject lead', 'error');
+            setActionInProgress(false);
+            return;
         }
 
         setTimeout(() => {
             setCurrentIndex(prev => prev + 1);
             setActionInProgress(false);
         }, 300);
-    }, [currentLead, actionInProgress]);
+    }, [currentLead, actionInProgress, currentIndex]);
+
+    const handleUndo = useCallback(async () => {
+        if (!lastRejected) return;
+        try {
+            await undoRejectLead(lastRejected.lead.Id);
+            showToast(`Undo — @${lastRejected.lead.username} restored to queue`, 'success');
+            setPendingCount(prev => prev + 1);
+
+            // Re-insert the lead at its original position
+            setLeads(prev => {
+                const updated = [...prev];
+                updated.splice(lastRejected.index, 0, lastRejected.lead);
+                return updated;
+            });
+            // Go back to that position
+            setCurrentIndex(lastRejected.index);
+            setLastRejected(null);
+            if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        } catch (e) {
+            console.error(e);
+            showToast('Failed to undo rejection', 'error');
+        }
+    }, [lastRejected]);
 
     // Keyboard shortcuts
     useEffect(() => {
@@ -163,11 +281,14 @@ export default function ReviewQueue() {
             } else if (e.key.toLowerCase() === 's') {
                 e.preventDefault();
                 goNext();
+            } else if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+                e.preventDefault();
+                handleUndo();
             }
         }
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [currentLead, handleApprove, handleReject, goNext]);
+    }, [currentLead, handleApprove, handleReject, goNext, handleUndo]);
 
     if (loading) {
         return (
@@ -190,6 +311,8 @@ export default function ReviewQueue() {
         );
     }
 
+    const currentImageUrl = activeImages.length > 0 && !failedIndices.has(imageIndex) ? makeImageUrl(activeImages[imageIndex]) : undefined;
+
     return (
         <div className="flex flex-col h-full">
             {/* Header */}
@@ -202,7 +325,7 @@ export default function ReviewQueue() {
             </div>
 
             {/* Two-column layout */}
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden relative">
                 <AnimatePresence mode="popLayout">
                     <motion.div
                         key={currentLead.Id}
@@ -215,35 +338,28 @@ export default function ReviewQueue() {
                         {/* LEFT COLUMN: Creator Profile */}
                         <div className="w-1/2 border-r overflow-y-auto p-6 space-y-5">
                             {/* Image Carousel */}
-                            <div className="relative aspect-[4/5] rounded-xl overflow-hidden bg-black group">
-                                {activeImages.length > 0 ? (
+                            <div className="relative aspect-[4/5] rounded-xl overflow-hidden bg-zinc-900 group">
+                                {currentImageUrl && !allImagesFailed ? (
                                     <>
                                         {imgStatus === 'loading' && (
                                             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500 z-0">
                                                 <Loader2 className="w-8 h-8 animate-spin mb-2 text-white/50" />
+                                                <p className="text-xs text-white/30">Loading image...</p>
                                             </div>
                                         )}
-                                        {imgStatus === 'error' && (
-                                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-900 text-zinc-500 z-0">
-                                                <span className="text-4xl mb-2 opacity-50">📸</span>
-                                                <p className="font-medium text-sm">Image unavailable</p>
-                                            </div>
-                                        )}
+
                                         <img
-                                            key={activeImages[imageIndex]}
-                                            src={makeImageUrl(activeImages[imageIndex])}
+                                            key={currentImageUrl}
+                                            src={currentImageUrl}
                                             alt={`Post ${imageIndex + 1}`}
-                                            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300 z-10"
+                                            className="absolute inset-0 w-full h-full object-cover z-10"
                                             referrerPolicy="no-referrer"
-                                            onError={(e) => {
-                                                (e.target as HTMLImageElement).style.opacity = '0';
-                                                setImgStatus('error');
+                                            onError={handleImageError}
+                                            onLoad={() => setImgStatus('loaded')}
+                                            style={{
+                                                opacity: imgStatus === 'loaded' ? 1 : 0,
+                                                transition: 'opacity 0.2s ease-in',
                                             }}
-                                            onLoad={(e) => {
-                                                (e.target as HTMLImageElement).style.opacity = '1';
-                                                setImgStatus('loaded');
-                                            }}
-                                            style={{ opacity: imgStatus === 'loaded' ? 1 : 0 }}
                                         />
                                     </>
                                 ) : (
@@ -255,30 +371,33 @@ export default function ReviewQueue() {
                                 {/* Carousel controls */}
                                 {activeImages.length > 1 && (
                                     <>
-                                        <button
-                                            onClick={prevImage}
-                                            className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity z-20"
-                                        >
+                                        <div className="absolute top-0 left-0 w-[40%] h-[70%] z-20 cursor-pointer" onClick={(e) => { e.stopPropagation(); prevImage(); }} />
+                                        <div className="absolute top-0 right-0 w-[40%] h-[70%] z-20 cursor-pointer" onClick={(e) => { e.stopPropagation(); nextImage(); }} />
+
+                                        <button onClick={prevImage} className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity z-30">
                                             <ChevronLeft size={20} />
                                         </button>
-                                        <button
-                                            onClick={nextImage}
-                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity z-20"
-                                        >
+                                        <button onClick={nextImage} className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-black/30 text-white hover:bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity z-30">
                                             <ChevronRight size={20} />
                                         </button>
-                                        <div className="absolute top-3 left-0 w-full flex justify-center gap-1 z-20 px-4">
+
+                                        {/* Dot indicators */}
+                                        <div className="absolute top-3 left-0 w-full flex justify-center gap-1 z-30 px-4">
                                             {activeImages.map((_, i) => (
                                                 <div
                                                     key={i}
-                                                    className={`flex-1 h-1 rounded-full transition-all ${i === imageIndex ? 'bg-white' : 'bg-white/40'}`}
+                                                    onClick={() => { if (!failedIndices.has(i)) setImageIndex(i); }}
+                                                    className={`flex-1 h-1 rounded-full transition-all ${failedIndices.has(i) ? 'bg-red-500/30 cursor-default' : i === imageIndex ? 'bg-white cursor-pointer' : 'bg-white/40 cursor-pointer'}`}
                                                 />
                                             ))}
                                         </div>
                                     </>
                                 )}
 
-                                {/* Photo score overlay */}
+                                {/* Image counter + photo score */}
+                                <div className="absolute bottom-3 left-3 bg-black/70 text-white px-2 py-1 rounded text-xs font-medium z-20">
+                                    {imageIndex + 1} / {activeImages.length}{failedIndices.size > 0 ? ` (${failedIndices.size} skipped)` : ''}
+                                </div>
                                 {currentLead.photo_score != null && (
                                     <div className="absolute bottom-3 right-3 bg-black/70 text-white px-2.5 py-1 rounded-full text-xs font-bold z-20">
                                         ⭐ {currentLead.photo_score}/10
@@ -294,9 +413,7 @@ export default function ReviewQueue() {
                                             src={makeImageUrl(currentLead.profile_pic)}
                                             className="w-full h-full object-cover"
                                             referrerPolicy="no-referrer"
-                                            onError={(e) => {
-                                                (e.target as HTMLImageElement).style.display = 'none';
-                                            }}
+                                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                                         />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-lg font-bold text-muted-foreground uppercase">
@@ -305,20 +422,12 @@ export default function ReviewQueue() {
                                     )}
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                    <a
-                                        href={currentLead.profile_url || `https://instagram.com/${currentLead.username}`}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="font-semibold text-base flex items-center gap-1.5 hover:underline"
-                                    >
+                                    <a href={currentLead.profile_url || `https://instagram.com/${currentLead.username}`} target="_blank" rel="noreferrer" className="font-semibold text-base flex items-center gap-1.5 hover:underline">
                                         @{currentLead.username}
                                         <ExternalLink size={14} className="text-muted-foreground" />
                                     </a>
                                     {currentLead.location_name && (
-                                        <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                            <MapPin size={13} />
-                                            {currentLead.location_name}
-                                        </p>
+                                        <p className="text-sm text-muted-foreground flex items-center gap-1"><MapPin size={13} />{currentLead.location_name}</p>
                                     )}
                                 </div>
                             </div>
@@ -346,10 +455,7 @@ export default function ReviewQueue() {
                                         {currentLead.bio}
                                     </p>
                                     {currentLead.bio.length > 150 && (
-                                        <button
-                                            onClick={() => setBioExpanded(!bioExpanded)}
-                                            className="text-xs text-primary font-medium mt-1 hover:underline"
-                                        >
+                                        <button onClick={() => setBioExpanded(!bioExpanded)} className="text-xs text-primary font-medium mt-1 hover:underline">
                                             {bioExpanded ? 'Show less' : 'Show more'}
                                         </button>
                                     )}
@@ -366,87 +472,72 @@ export default function ReviewQueue() {
                         {/* RIGHT COLUMN: Email Editor */}
                         <div className="w-1/2 flex flex-col overflow-hidden">
                             <div className="p-6 flex-1 overflow-y-auto space-y-4">
-                                {/* Header */}
                                 <div className="flex items-center justify-between">
                                     <h3 className="text-lg font-bold">Email Preview</h3>
-                                    <Button variant="outline" size="sm" disabled className="opacity-50 text-xs">
-                                        Regenerate
-                                    </Button>
+                                    <Button variant="outline" size="sm" disabled className="opacity-50 text-xs">Regenerate</Button>
                                 </div>
 
-                                {/* To field (readonly) */}
                                 <div>
                                     <label className="text-xs font-medium text-muted-foreground mb-1 block">To</label>
-                                    <div className="w-full px-3 py-2 rounded-md border bg-muted/50 text-sm text-muted-foreground">
-                                        {currentLead.email}
-                                    </div>
+                                    <div className="w-full px-3 py-2 rounded-md border bg-muted/50 text-sm text-muted-foreground">{currentLead.email}</div>
                                 </div>
 
-                                {/* Subject field (editable) */}
                                 <div>
                                     <label className="text-xs font-medium text-muted-foreground mb-1 block">Subject</label>
-                                    <input
-                                        type="text"
-                                        value={editedSubject}
-                                        onChange={(e) => setEditedSubject(e.target.value)}
-                                        className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                                    />
+                                    <input type="text" value={editedSubject} onChange={(e) => setEditedSubject(e.target.value)} className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary" />
                                 </div>
 
-                                {/* Body field (editable) */}
                                 <div className="flex-1">
                                     <label className="text-xs font-medium text-muted-foreground mb-1 block">Body</label>
-                                    <textarea
-                                        value={editedBody}
-                                        onChange={(e) => setEditedBody(e.target.value)}
-                                        className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-y font-mono leading-relaxed"
-                                        style={{ minHeight: '280px' }}
-                                    />
+                                    <textarea value={editedBody} onChange={(e) => setEditedBody(e.target.value)} className="w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-y font-mono leading-relaxed" style={{ minHeight: '280px' }} />
                                 </div>
                             </div>
 
                             {/* Action Bar */}
                             <div className="border-t px-6 py-4 flex items-center justify-between bg-card">
                                 <div className="flex gap-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={goNext}
-                                        disabled={actionInProgress || currentIndex >= leads.length - 1}
-                                        className="gap-1.5"
-                                    >
-                                        <SkipForward size={14} />
-                                        Skip
-                                        <kbd className="ml-1 text-[10px] bg-muted px-1 py-0.5 rounded font-mono">S</kbd>
+                                    <Button variant="outline" size="sm" onClick={goNext} disabled={actionInProgress || currentIndex >= leads.length - 1} className="gap-1.5">
+                                        <SkipForward size={14} />Skip<kbd className="ml-1 text-[10px] bg-muted px-1 py-0.5 rounded font-mono">S</kbd>
                                     </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={handleReject}
-                                        disabled={actionInProgress}
-                                        className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
-                                    >
-                                        <X size={14} />
-                                        Reject
-                                        <kbd className="ml-1 text-[10px] bg-muted px-1 py-0.5 rounded font-mono">R</kbd>
+                                    <Button variant="outline" size="sm" onClick={handleReject} disabled={actionInProgress} className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700">
+                                        <X size={14} />Reject<kbd className="ml-1 text-[10px] bg-muted px-1 py-0.5 rounded font-mono">R</kbd>
                                     </Button>
                                 </div>
-                                <Button
-                                    size="sm"
-                                    onClick={handleApprove}
-                                    disabled={actionInProgress}
-                                    className="gap-1.5 text-white"
-                                    style={{ backgroundColor: '#D91C60' }}
-                                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#C01854')}
-                                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#D91C60')}
-                                >
-                                    <Send size={14} />
-                                    Approve & Send
-                                    <kbd className="ml-1 text-[10px] bg-white/20 px-1 py-0.5 rounded font-mono">↵</kbd>
+                                <Button size="sm" onClick={handleApprove} disabled={actionInProgress} className="gap-1.5 text-white" style={{ backgroundColor: '#D91C60' }} onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#C01854')} onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = '#D91C60')}>
+                                    <Send size={14} />Approve & Send<kbd className="ml-1 text-[10px] bg-white/20 px-1 py-0.5 rounded font-mono">↵</kbd>
                                 </Button>
                             </div>
                         </div>
                     </motion.div>
+                </AnimatePresence>
+
+                {/* UNDO BANNER — fixed at bottom */}
+                <AnimatePresence>
+                    {lastRejected && (
+                        <motion.div
+                            initial={{ y: 80, opacity: 0 }}
+                            animate={{ y: 0, opacity: 1 }}
+                            exit={{ y: 80, opacity: 0 }}
+                            transition={{ duration: 0.25 }}
+                            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-50"
+                        >
+                            <div className="flex items-center gap-3 bg-zinc-900 text-white pl-4 pr-2 py-2.5 rounded-full shadow-xl">
+                                <span className="text-sm">
+                                    Rejected <strong>@{lastRejected.lead.username}</strong>
+                                </span>
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={handleUndo}
+                                    className="gap-1.5 text-amber-400 hover:text-amber-300 hover:bg-white/10 rounded-full"
+                                >
+                                    <Undo2 size={14} />
+                                    Undo
+                                    <kbd className="ml-0.5 text-[10px] bg-white/15 px-1 py-0.5 rounded font-mono">Ctrl+Z</kbd>
+                                </Button>
+                            </div>
+                        </motion.div>
+                    )}
                 </AnimatePresence>
             </div>
         </div>

@@ -10,6 +10,12 @@ const proxyConfig: Record<string, string | ProxyOptions> = {
     changeOrigin: true,
     secure: false,
   },
+  '/webhook-proxy': {
+    target: 'https://n8n.restaurantreykjavik.com',
+    changeOrigin: true,
+    secure: false,
+    rewrite: (path: string) => path.replace(/^\/webhook-proxy/, ''),
+  },
   '/proxy-image': {
     target: 'https://scontent-atl3-3.cdninstagram.com',
     changeOrigin: true,
